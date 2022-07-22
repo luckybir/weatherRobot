@@ -1,0 +1,7 @@
+weather_config:
+    regexp_filter: false
+    regexp_filter_pattern: (预警|七天天气预报|7天天气预报|小姐姐说天气|广州天气雷雨提示)
+    regexp_replace_html_tag: true
+bot_web_hook: wework hook
+cron_expression: 29/30 6-19 * * *
+max_id: 4794035342413827
