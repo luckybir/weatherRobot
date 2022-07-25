@@ -6,12 +6,14 @@ import (
 	jsoniter "github.com/json-iterator/go"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v3"
 	"io/ioutil"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -33,16 +35,15 @@ type WeatherContent struct {
 		Cards []struct {
 			CardType int64 `json:"card_type"`
 			Mblog    struct {
-				//CreateAt    string `json:"create_at"`
+				CreateAt    string `json:"create_at"`
 				ID         string `json:"id"`
 				Text       string `json:"text"`
 				BmiddlePic string `json:"bmiddle_pic"`
 				PicNum     int64  `json:"pic_num"`
-				//Pics []struct{
-				//	PID string `json:"pid"`
-				//	URL string `json:"url"`
-				//}`json:"pics"`
-
+				Pics       []struct {
+					PID string `json:"pid"`
+					//URL string `json:"url"`
+				} `json:"pics"`
 			} `json:"mblog"`
 		} `json:"cards"`
 	} `json:"data"`
@@ -71,7 +72,16 @@ func main() {
 }
 
 func initZapLog() {
-	logger, _ := zap.NewDevelopment()
+
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05")
+	config := zap.NewProductionConfig()
+	config.Development = false
+	config.Encoding = "console"
+	config.DisableCaller = true
+	config.EncoderConfig = encoderConfig
+
+	logger, _ := config.Build()
 	defer logger.Sync()
 
 	sugar = logger.Sugar()
@@ -111,27 +121,18 @@ func weatherBotStart() {
 	processWeatherContent(wc)
 	sendWeatherContent(wc)
 
-	updateConifigMaxID()
 }
 
 func getWeatherContent(wc *WeatherContent) {
 	client := http.Client{}
 
-	url := `https://m.weibo.cn/api/container/getIndex`
+	url := `https://m.weibo.cn/api/container/getIndex?uid=2294193132&t=0&luicode=10000011&lfid=100103type%3D1%26q%3D%E5%B9%BF%E5%B7%9E%E5%A4%A9%E6%B0%94&type=uid&value=2294193132&containerid=1076032294193132`
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		sugar.Errorw("get weibo Content failed",
 			"err", err.Error())
 	}
-
-	query := req.URL.Query()
-	query.Add("uid", "2294193132")
-	query.Add("luicode", "10000011")
-	query.Add("lfid", "100103type=1&q=广州天气")
-	query.Add("containerid", "1076032294193132")
-
-	req.URL.RawQuery = query.Encode()
 
 	req.Header.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
 
@@ -162,9 +163,28 @@ func processWeatherContent(wc *WeatherContent) {
 
 	var currentMaxID int64
 
+	tmpWC := new(WeatherContent)
+
+	tmpWC = wc
+	tmpWC.Data.Cards = nil
+
 	for i := len(wc.Data.Cards) - 1; i >= 0; i-- {
 
+		//only collect content from 6:00 to 20:00
+		t,err := time.Parse(time.RubyDate, wc.Data.Cards[i].Mblog.CreateAt)
+		if err != nil {
+			sugar.Errorw("convert id error",
+				"err", err.Error(),
+				"ID", wc.Data.Cards[i].Mblog.CreateAt)
+			continue
+		}
+
+		if t.Hour() < 6 || t.Hour() > 20 {
+			continue
+		}
+
 		if wc.Data.Cards[i].Mblog.ID == "" {
+			//wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
 			continue
 		}
 
@@ -181,7 +201,7 @@ func processWeatherContent(wc *WeatherContent) {
 
 		// filter old text
 		if config.MaxID >= id {
-			wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
+			//wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
 			continue
 		}
 
@@ -194,7 +214,7 @@ func processWeatherContent(wc *WeatherContent) {
 			}
 
 			if matched == false {
-				wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
+				//wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
 				continue
 			}
 		}
@@ -204,10 +224,17 @@ func processWeatherContent(wc *WeatherContent) {
 			re := regexp.MustCompile("<[^>]+>")
 			wc.Data.Cards[i].Mblog.Text = re.ReplaceAllString(wc.Data.Cards[i].Mblog.Text, "")
 		}
+
+		tmpWC.Data.Cards = append(tmpWC.Data.Cards,wc.Data.Cards[i] )
 	}
 
-	config.MaxID = currentMaxID
+	wc = tmpWC
 
+	if config.MaxID < currentMaxID {
+		sugar.Infof("change max ID from %v to %v", config.MaxID, currentMaxID)
+		config.MaxID = currentMaxID
+		updateConifigMaxID()
+	}
 	//sugar.Debugf("%+v", wc)
 }
 
@@ -220,6 +247,8 @@ func sendWeatherContent(wc *WeatherContent) {
 	}
 
 	for i := 0; i < len(wc.Data.Cards); i++ {
+		//sugar.Infof("%+v",wc.Data.Cards[i])
+
 		//send text, because wework reject weibo pic url
 		if wc.Data.Cards[i].Mblog.Text != "" {
 			sendWeatherContentTextToWeworkBot(wc.Data.Cards[i].Mblog.Text)
