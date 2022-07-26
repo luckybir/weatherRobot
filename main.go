@@ -27,25 +27,27 @@ type Config struct {
 	MaxID          int64  `yaml:"max_id"`
 }
 
+type WeatherContentDataCard struct {
+	CardType int64 `json:"card_type"`
+	Mblog    struct {
+		CreatedAt  string `json:"created_at"`
+		ID         string `json:"id"`
+		Text       string `json:"text"`
+		BmiddlePic string `json:"bmiddle_pic"`
+		PicNum     int64  `json:"pic_num"`
+		Pics       []struct {
+			PID string `json:"pid"`
+			//URL string `json:"url"`
+		} `json:"pics"`
+	} `json:"mblog"`
+}
+
 type WeatherContent struct {
 	Data struct {
 		CardListInfo struct {
 			SinceID int64 `json:"since_id"`
 		} `json:"cardlistInfo"`
-		Cards []struct {
-			CardType int64 `json:"card_type"`
-			Mblog    struct {
-				CreateAt    string `json:"create_at"`
-				ID         string `json:"id"`
-				Text       string `json:"text"`
-				BmiddlePic string `json:"bmiddle_pic"`
-				PicNum     int64  `json:"pic_num"`
-				Pics       []struct {
-					PID string `json:"pid"`
-					//URL string `json:"url"`
-				} `json:"pics"`
-			} `json:"mblog"`
-		} `json:"cards"`
+		Cards []WeatherContentDataCard `json:"cards"`
 	} `json:"data"`
 
 	OK int64 `json:"ok"`
@@ -76,6 +78,7 @@ func initZapLog() {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05")
 	config := zap.NewProductionConfig()
+	//config.Level.SetLevel(zap.DebugLevel)
 	config.Development = false
 	config.Encoding = "console"
 	config.DisableCaller = true
@@ -163,19 +166,20 @@ func processWeatherContent(wc *WeatherContent) {
 
 	var currentMaxID int64
 
-	tmpWC := new(WeatherContent)
-
-	tmpWC = wc
-	tmpWC.Data.Cards = nil
+	tmpWCDataCards := make([]WeatherContentDataCard, 0)
 
 	for i := len(wc.Data.Cards) - 1; i >= 0; i-- {
 
+		if wc.Data.Cards[i].CardType == 11 {
+			continue
+		}
+
 		//only collect content from 6:00 to 20:00
-		t,err := time.Parse(time.RubyDate, wc.Data.Cards[i].Mblog.CreateAt)
+		t, err := time.Parse(time.RubyDate, wc.Data.Cards[i].Mblog.CreatedAt)
 		if err != nil {
 			sugar.Errorw("convert id error",
 				"err", err.Error(),
-				"ID", wc.Data.Cards[i].Mblog.CreateAt)
+				"ID", wc.Data.Cards[i].Mblog.CreatedAt)
 			continue
 		}
 
@@ -201,7 +205,6 @@ func processWeatherContent(wc *WeatherContent) {
 
 		// filter old text
 		if config.MaxID >= id {
-			//wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
 			continue
 		}
 
@@ -214,7 +217,6 @@ func processWeatherContent(wc *WeatherContent) {
 			}
 
 			if matched == false {
-				//wc.Data.Cards = append(wc.Data.Cards[:i], wc.Data.Cards[i+1:]...)
 				continue
 			}
 		}
@@ -225,17 +227,17 @@ func processWeatherContent(wc *WeatherContent) {
 			wc.Data.Cards[i].Mblog.Text = re.ReplaceAllString(wc.Data.Cards[i].Mblog.Text, "")
 		}
 
-		tmpWC.Data.Cards = append(tmpWC.Data.Cards,wc.Data.Cards[i] )
+		tmpWCDataCards = append(tmpWCDataCards, wc.Data.Cards[i])
 	}
 
-	wc = tmpWC
+	wc.Data.Cards = tmpWCDataCards
 
 	if config.MaxID < currentMaxID {
 		sugar.Infof("change max ID from %v to %v", config.MaxID, currentMaxID)
 		config.MaxID = currentMaxID
 		updateConifigMaxID()
 	}
-	//sugar.Debugf("%+v", wc)
+
 }
 
 func sendWeatherContent(wc *WeatherContent) {
@@ -247,7 +249,6 @@ func sendWeatherContent(wc *WeatherContent) {
 	}
 
 	for i := 0; i < len(wc.Data.Cards); i++ {
-		//sugar.Infof("%+v",wc.Data.Cards[i])
 
 		//send text, because wework reject weibo pic url
 		if wc.Data.Cards[i].Mblog.Text != "" {
