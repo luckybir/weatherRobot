@@ -250,15 +250,16 @@ func sendWeatherContent(wc *WeatherContent) {
 
 	for i := 0; i < len(wc.Data.Cards); i++ {
 
-		//send text, because wework reject weibo pic url
+		//send pic first, wework only display the last text
+		if wc.Data.Cards[i].Mblog.BmiddlePic != "" {
+			sendWeatherContentPicToWeworkBot(wc.Data.Cards[i].Mblog.BmiddlePic)
+		}
+
+		//send text not markdown with url, because wework reject weibo pic url
 		if wc.Data.Cards[i].Mblog.Text != "" {
 			sendWeatherContentTextToWeworkBot(wc.Data.Cards[i].Mblog.Text)
 		}
 
-		//send pic
-		if wc.Data.Cards[i].Mblog.BmiddlePic != "" {
-			sendWeatherContentPicToWeworkBot(wc.Data.Cards[i].Mblog.BmiddlePic)
-		}
 	}
 
 }
